@@ -45,7 +45,7 @@ pkgTemplate = " %(repo)s/%(name)s %(ver)s"
 # important pkg tempalte - same as above but for "important" pkgs
 ipkgTemplate = " *!* %(repo)s/%(name)s %(ver)s"
 # summary template - this is the summary line at the end
-# valid keywords - %(numpkg)d, %(size).2f, %(inumpkg), %(isize).2f, %(pkgstring)s 
+# valid keywords - %(numpkg)d, %(size).2f, %(inumpkg), %(isize).2f, %(pkgstring)s
 summaryTemplate = " %(numpkg)d %(pkgstring)s"
 # important summary template - same as above if "important" pkgs are found
 isummaryTemplate = summaryTemplate + " (%(inumpkg)d important %(isize).2f MB)"
@@ -54,10 +54,10 @@ isummaryTemplate = summaryTemplate + " (%(inumpkg)d important %(isize).2f MB)"
 pkgrightcolTemplate = "%(size).2f MB"
 # important pkg right column template - same as above but for important pkgs
 ipkgrightcolTemplate = pkgrightcolTemplate
-# summary right column template - summay line right column 
+# summary right column template - summay line right column
 # valid keywords - same as summaryTemplate
 summaryrightcolTemplate = "%(size).2f MB"
-# important summary right column template - same as above if "important" pkgs are found 
+# important summary right column template - same as above if "important" pkgs are found
 isummaryrightcolTemplate = summaryrightcolTemplate
 # seperator before summary ('' = disabled)
 block = '-' * 12
@@ -87,7 +87,7 @@ def cmpPkgs(x, y):
         return cmp(x['size'], y['size'])
     else:
         return x['rate']-y['rate']
-        
+
 if onlyImportant:
     pkgTemplate, pkgrightcolTemplate = '',''
 
@@ -105,7 +105,7 @@ for item in program:
     pkg = {}
     desc_path = False
     desc_paths =  glob('/var/lib/pacman/sync/*/%s'%item)
-    
+
     if not desc_path:
             desc_path = desc_paths[0] + '/desc'
 
@@ -127,15 +127,15 @@ for item in program:
             pkgVersion = desc[index+1].strip()
             pkg['ver'] = pkgVersion
             checkVersion = 1
-    
-    pkgRate = [v for x, v  in ratePkg.iteritems() 
+
+    pkgRate = [v for x, v  in ratePkg.iteritems()
             if fnmatch(pkg['name'], x)]
     repoRate = [v for x, v in rateRepo.iteritems()
             if fnmatch(pkg['repo'], x)]
     pkg['rate'] = sum(pkgRate + repoRate)
 
     pkgs.append(pkg)
-    
+
 # echo list of pkgs
 if pkgs:
     summary = {}
@@ -151,7 +151,7 @@ if pkgs:
     pkgs.sort(cmpPkgs, reverse=True)
     for pkg in pkgs:
         important = False
-        
+
         if pkg['rate'] >= iThresh:
             summary['isize'] += pkg['size']
             summary['inumpkg'] += 1
@@ -163,7 +163,7 @@ if pkgs:
 
         if len(pkgString)+len(sizeValueString)>width-1:
             pkgString = pkgString[:width-len(sizeValueString)-4]+'...'
-        
+
         line = pkgString.ljust(width - len(sizeValueString)) + sizeValueString
         if line.strip():
             lines.append(line)
@@ -173,7 +173,7 @@ if pkgs:
             print '\n'.join(lines[:num_of_pkgs])
         else:
             print '\n'.join(lines)
-        if block: 
+        if block:
             print block.rjust(width)
 
 
