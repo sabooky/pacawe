@@ -5,18 +5,14 @@
 # Conky: e.g. put in conky '${texeci 1800 python path/to/this/file}'
 # Author: Michal Orlik <thror.fw@gmail.com>, sabooky <sabooky@yahoo.com>
 
-################################################################################
-# SETTINGS - main settings
-# set this to True if you just want one summary line (True/False)
-brief = False
-# number of packages to display (0 = display all)
-num_of_pkgs = 5
-#show only important packages
-onlyImportant = False
-########################################
+from __future__ import print_function
 
-# OPTIONAL SETTINGS
+#===============================================================================
+# SETTINGS
+#===============================================================================
+#-------------------------------------------------------------------------------
 # PACKAGE RATING - prioritize packages by rating
+#-------------------------------------------------------------------------------
 # pkgs will be sorted by rating. pkg rating = ratePkg + rateRepo for that pkg
 # pkg (default=0, wildcards accepted)
 ratePkg = {
@@ -34,106 +30,153 @@ rateRepo = {
         }
 # at what point is a pkg considered "important"
 iThresh = 5
-########################################
-
+#-------------------------------------------------------------------------------
 # OUTPUT SETINGS - configure the output format
+#-------------------------------------------------------------------------------
+# show the individual package detail (True/False)
+showPkgDetail = True
+# show the summary line (True/False)
+showSummary = True
+# number of packages to display (None = display all)
+num_of_pkgs = None
 # change width of output
 width = 52
+
+# formula to use to calculate the size variable. input=size in bytes
+calc_size = lambda size: size/1024/1024
+
+# separator between lines
+separator = "\n"
 # pkg template - this is how individual pkg info is displayed ('' = disabled)
-# valid keywords - %(name)s, %(repo)s, %(size).2f, %(ver)s, %(rate)s
-pkgTemplate = " %(repo)s/%(name)s %(ver)s"
-# important pkg tempalte - same as above but for "important" pkgs
-ipkgTemplate = " *!* %(repo)s/%(name)s %(ver)s"
+# valid keywords - lowercase version of all % surrounded values in desc files
+# see: /var/lib/pacman/sync/*/*/desc for more info
+# also available is a special variable "size" which is defined above
+# regular pkgs
+pkgLeftColTemplate = " {repo}/{name} {version}"
+pkgRightColTemplate = "{size:.2f} MB"
+# important pkgs
+ipkgLeftColTemplate = " *!*" + pkgLeftColTemplate
+ipkgRightColTemplate = pkgRightColTemplate
+# pkg template
+# valid keywords - leftCol, rightCol, width, pad
+# width = total width, pad = width - leftCol
+pkgTemplate = "{leftCol}{rightCol:>{pad}}"
+ipkgTemplate = pkgTemplate
+
 # summary template - this is the summary line at the end
-# valid keywords - %(numpkg)d, %(size).2f, %(inumpkg), %(isize).2f, %(pkgstring)s
-summaryTemplate = " %(numpkg)d %(pkgstring)s"
+# valid keywords - numpkg, size, inumpkg, isize, pkgstring
+summaryLeftColTemplate = " {numpkg} {pkgstring}"
+summaryRightColTemplate = "{size:.2f} MB"
 # important summary template - same as above if "important" pkgs are found
-isummaryTemplate = summaryTemplate + " (%(inumpkg)d important %(isize).2f MB)"
-# pkg right column template - individual pkg right column
-# valid keywords - same as pkgTemplate
-pkgrightcolTemplate = "%(size).2f MB"
-# important pkg right column template - same as above but for important pkgs
-ipkgrightcolTemplate = pkgrightcolTemplate
-# summary right column template - summay line right column
-# valid keywords - same as summaryTemplate
-summaryrightcolTemplate = "%(size).2f MB"
-# important summary right column template - same as above if "important" pkgs are found
-isummaryrightcolTemplate = summaryrightcolTemplate
-# seperator before summary ('' = disabled)
-block = '-' * 12
+isummaryLeftColTemplate = summaryLeftColTemplate + " ({inumpkg} important {isize:.2f} MB)"
+isummaryRightColTemplate = summaryRightColTemplate
+# summary template
+# valid keywords - leftCol, rightCol, width, pad
+# width = total width, pad = width - leftCol
+summaryTemplate = "{leftCol}{rightCol:>{pad}}"
+isummaryTemplate = summaryTemplate
+
+# separator before summary ('' = disabled)
+block = ('-' * 12).rjust(width)
 # up to date msg
 u2d = ' Your system is up-to-date'
-################################################################################
+# translate table, the output is run through this and translated
+# each entry is a tuple (key, value, count) pair
+# key: regex to search for
+# value: replacement string (can use \1 for groups)
+# count: number of times to do the replacement (on a given column), NONE/0 for all
+Xlate = ()
+#Xlate = ((r"(e)", r"(\1)", 0),
+#        )
+
 
 import subprocess
+import sys
 
-from time import sleep
 from glob import glob
 from fnmatch import fnmatch
+from re import sub
 
-program = []
-pkgs = []
-url = None
 
-def runpacman():
-    """runs pacman returning the popen object"""
+def get_pkgs():
+    """runs pacman -Qu parsing the out of date package list"""
     p = subprocess.Popen(['pacman','-Qu'],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    return p
+    data = p.communicate()[0]
+    data_split = data.split('\n\n')
+    if len(data_split) < 3:
+        return []
+    targets_str = data_split[-2]
+    pkgs_str = targets_str.split(':')[1]
+    packages = [entry.split()[0] for entry in pkgs_str.split('  ') if entry.strip()]
+    return packages
 
-def cmpPkgs(x, y):
+def cmp_pkgs(x, y):
     """Compares packages for sorting"""
     if x['rate']==y['rate']:
         return cmp(x['size'], y['size'])
     else:
         return x['rate']-y['rate']
 
-if onlyImportant:
-    pkgTemplate, pkgrightcolTemplate = '',''
+def get_pkg_info(pkg_name, calc_size = lambda size: size/1024/1024):
+    desc_paths = glob('/var/lib/pacman/sync/*/%s'%pkg_name)
+    if not desc_paths:
+        return None
+    pkg_desc_fname = desc_paths[0] + '/desc'
+    
+    pkg_info = {}
+    pkg_info['repo'] = pkg_desc_fname.split('/')[-3]
+    with open(pkg_desc_fname) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('%') and line.endswith('%'):
+                name = line.strip('%').lower()
+                value = f.next().strip()
+                pkg_info[name] = value
 
-p = runpacman()
-#parse pacmans output
-for line in p.stdout:
-    if line.startswith('Targets'):
-        program = line.split(':',1)[1].split()
-        for line in p.stdout:
-            if not line.strip():
-                break
-            program += line.split()
+    # size converted using user settings
+    pkg_info['size'] = calc_size(float(pkg_info['csize']))
 
-for item in program:
-    pkg = {}
-    desc_path = False
-    desc_paths =  glob('/var/lib/pacman/sync/*/%s'%item)
+    pkg_rate = [v for x, v  in ratePkg.items() 
+            if fnmatch(pkg_info['name'], x)]
+    repo_rate = [v for x, v in rateRepo.items()
+            if fnmatch(pkg_info['repo'], x)]
+    pkg_info['rate'] = sum(pkg_rate + repo_rate)
 
-    if not desc_path:
-            desc_path = desc_paths[0] + '/desc'
+    # am i important?
+    pkg_info['important'] = pkg_info['rate'] >= iThresh
 
-    pkg['repo'] = desc_path.split('/')[-3]
-    desc = open(desc_path).readlines()
-    checkName = 0
-    checkSize = 0
-    checkVersion = 0
-    for index, line in enumerate(desc):
-        if line=='%NAME%\n' and checkName == 0:
-            pkgName = desc[index+1].strip()
-            pkg['name'] = pkgName
-            checkName = 1
-        if line=='%CSIZE%\n' and checkSize == 0:
-            pkgSize = int(desc[index+1].strip())
-            pkg['size'] = pkgSize / 1024.0 / 1024
-            checkSize = 1
-        if line=='%VERSION%\n' and checkVersion == 0:
-            pkgVersion = desc[index+1].strip()
-            pkg['ver'] = pkgVersion
-            checkVersion = 1
+    return pkg_info
 
-    pkgRate = [v for x, v  in ratePkg.iteritems()
-            if fnmatch(pkg['name'], x)]
-    repoRate = [v for x, v in rateRepo.iteritems()
-            if fnmatch(pkg['repo'], x)]
-    pkg['rate'] = sum(pkgRate + repoRate)
+def format_line(left_template, right_template, join_template, data, width, Xlate=()):
+    line_left = left_template.format(**data)
+    line_right = right_template.format(**data)
+    for k, v, c in Xlate:
+        line_left = sub(k, v, line_left, c)
+        line_right = sub(k, v, line_right, c)
 
+    line = join_template.format(leftCol=line_left,
+            rightCol=line_right,
+            width=width, pad=0)
+
+    # if the line is longer than width, crop left col
+    line_len = len(line)
+    if width and line_len>width:
+        line_left = line_left[:width - len(line_right)-4] + '...'
+
+    line = join_template.format(leftCol=line_left,
+            rightCol=line_right,
+            width=width, pad=width - len(line_left))
+    return line
+
+
+pkg_names = get_pkgs()
+pkgs = []
+for pkg_name in pkg_names:
+    pkg = get_pkg_info(pkg_name, calc_size=calc_size)
+    if not pkg:
+        print("WARNING: %s not found, skipping" % pkg_name, file=sys.stderr)
+        continue
     pkgs.append(pkg)
 
 # echo list of pkgs
@@ -148,45 +191,42 @@ if pkgs:
     summary['inumpkg'] = 0
     summary['isize'] = 0
     lines = []
-    pkgs.sort(cmpPkgs, reverse=True)
+    pkgs.sort(cmp_pkgs, reverse=True)
     for pkg in pkgs:
-        important = False
-
         if pkg['rate'] >= iThresh:
             summary['isize'] += pkg['size']
             summary['inumpkg'] += 1
-            pkgString = ipkgTemplate % pkg
-            sizeValueString = ipkgrightcolTemplate % pkg
+            left_template = ipkgLeftColTemplate
+            right_template = ipkgRightColTemplate
+            pkg_template = ipkgTemplate
         else:
-            pkgString = pkgTemplate % pkg
-            sizeValueString = pkgrightcolTemplate % pkg
+            left_template = pkgLeftColTemplate
+            right_template = pkgRightColTemplate
+            pkg_template = pkgTemplate
 
-        if len(pkgString)+len(sizeValueString)>width-1:
-            pkgString = pkgString[:width-len(sizeValueString)-4]+'...'
-
-        line = pkgString.ljust(width - len(sizeValueString)) + sizeValueString
-        if line.strip():
-            lines.append(line)
-
-    if not brief:
-        if num_of_pkgs:
-            print '\n'.join(lines[:num_of_pkgs])
-        else:
-            print '\n'.join(lines)
-        if block:
-            print block.rjust(width)
+        line = format_line(left_template, right_template, pkg_template, pkg, width, Xlate=Xlate)
+        lines.append(line)
 
 
     if summary['inumpkg']:
-        overallString = isummaryTemplate % summary
-        overallMBString = summaryrightcolTemplate % summary
+        left_template = isummaryLeftColTemplate
+        right_template = isummaryRightColTemplate
+        summary_template = isummaryTemplate
     else:
-        overallString = summaryTemplate % summary
-        overallMBString = isummaryrightcolTemplate % summary
+        left_template = summaryLeftColTemplate
+        right_template = summaryRightColTemplate
+        summary_template = summaryTemplate
 
-    summaryline =  overallString.ljust(width - len(overallMBString)) \
-                       + overallMBString
-    if summaryline:
-        print summaryline
+    summary_line = format_line(left_template, right_template, summary_template, summary, width, Xlate=Xlate)
+
+    out_list = []
+    if showPkgDetail:
+        out_list += lines[:num_of_pkgs]
+    if block:
+        out_list.append(block)
+    if showSummary:
+        out_list.append(summary_line)
+
+    print(*out_list, sep=separator)
 else:
-    print u2d
+    print(u2d)
