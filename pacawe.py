@@ -177,17 +177,19 @@ def format_line(left_template, right_template, join_template, data, width, offse
 
     line = join_template.format(leftCol=line_left,
             rightCol=line_right,
-            width=width, pad=0)
+            width=width, pad=0, **data)
 
     # if the line is longer than width, crop left col
     line_len = len(line) + offset
     if width and line_len>width:
         line_left = line_left[:width - len(line_right)-4] + '...'
     pad = width - len(line_left)
+    if pad < 0:
+        pad = 0
 
     line = join_template.format(leftCol=line_left,
             rightCol=line_right,
-            width=width, pad=pad)
+            width=width, pad=pad, **data)
     return line
 
 
