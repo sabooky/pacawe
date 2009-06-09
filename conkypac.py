@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# Description: Python script for notifying archlinux updates.
+# Description: A flexible Python pacman notifier.
 # Usage: Put shell script with command 'pacman -Sy' into /etc/cron.hourly/
-# Conky: e.g. put in conky '${texeci 1800 python path/to/this/file}'
-# Author: Michal Orlik <thror.fw@gmail.com>, sabooky <sabooky@yahoo.com>
+# Author: sabooky <sabooky@yahoo.com>
+# Special Thanks for the orginal idea/script: Michal Orlik <thror.fw@gmail.com>
 
 from __future__ import print_function
 
@@ -62,6 +62,9 @@ ipkgRightColTemplate = pkgRightColTemplate
 # width = total width, pad = width - leftCol
 pkgTemplate = "{leftCol}{rightCol:>{pad}}"
 ipkgTemplate = pkgTemplate
+# offset, this is a good way of getting around non-printable characters
+pkgOffset = 0
+ipkgOffset = 0
 
 # summary template - this is the summary line at the end
 # valid keywords - numpkg, size, inumpkg, isize, pkgstring
@@ -80,6 +83,9 @@ isummaryTemplate = summaryTemplate
 block = ('-' * 12).rjust(width)
 # up to date msg
 u2d = ' Your system is up-to-date'
+# package string messages
+pkg_string = 'package'
+pkgs_string = 'packages'
 # translate table, the output is run through this and translated
 # each entry is a tuple (key, value, count) pair
 # key: regex to search for
@@ -98,6 +104,9 @@ from fnmatch import fnmatch
 from re import sub
 
 
+#===============================================================================
+# Functions
+#===============================================================================
 def get_pkgs():
     """runs pacman -Qu parsing the out of date package list"""
     p = subprocess.Popen(['pacman','-Qu'],
@@ -111,14 +120,12 @@ def get_pkgs():
     packages = [entry.split()[0] for entry in pkgs_str.split('  ') if entry.strip()]
     return packages
 
-def cmp_pkgs(x, y):
-    """Compares packages for sorting"""
-    if x['rate']==y['rate']:
-        return cmp(x['size'], y['size'])
-    else:
-        return x['rate']-y['rate']
 
-def get_pkg_info(pkg_name, calc_size = lambda size: size/1024/1024):
+def get_pkg_info(pkg_name, calc_size = lambda size: size/1024/1024, iThresh = 5):
+    """Gets the arch linux package info by parsing the desc file.
+    pkg_name: the name of the package
+    calc_size: function to calculate size, takes bytes as input
+    iThresh: at what point is the package considered important"""
     desc_paths = glob('/var/lib/pacman/sync/*/%s'%pkg_name)
     if not desc_paths:
         return None
@@ -148,7 +155,20 @@ def get_pkg_info(pkg_name, calc_size = lambda size: size/1024/1024):
 
     return pkg_info
 
-def format_line(left_template, right_template, join_template, data, width, Xlate=()):
+
+def format_line(left_template, right_template, join_template, data, width, offset=0, Xlate=()):
+    """Helper function to print each output line
+    left_template: this is the left side, will be cropped to fit width/offset.
+    right_template: the right half of the template
+    join_template: the full template, this can join left/right_templates or be standalone.
+                   this template gets passed in the width and the padding to allow for
+                   right alignment of the right_template
+    data: the pkg data
+    width: maximum width of line
+    offset: offset for cropping right template width, helpful for non printable chars
+            example: <span color='red'>{name}
+            -18 offset would make it so that line gets cropped properly
+    Xlate: any post formatting translations."""
     line_left = left_template.format(**data)
     line_right = right_template.format(**data)
     for k, v, c in Xlate:
@@ -160,16 +180,24 @@ def format_line(left_template, right_template, join_template, data, width, Xlate
             width=width, pad=0)
 
     # if the line is longer than width, crop left col
-    line_len = len(line)
+    line_len = len(line) + offset
     if width and line_len>width:
         line_left = line_left[:width - len(line_right)-4] + '...'
+    pad = width - len(line_left)
 
     line = join_template.format(leftCol=line_left,
             rightCol=line_right,
-            width=width, pad=width - len(line_left))
+            width=width, pad=pad)
     return line
 
 
+#===============================================================================
+# Main Program
+#===============================================================================
+# if config file is supplied parse it
+if len(sys.argv) == 2:
+    execfile(sys.argv[1])
+# parse pacman output and get a list of pkg names/info
 pkg_names = get_pkgs()
 pkgs = []
 for pkg_name in pkg_names:
@@ -179,19 +207,21 @@ for pkg_name in pkg_names:
         continue
     pkgs.append(pkg)
 
-# echo list of pkgs
+# out-of-date packages found, get summary info, format lines and print
 if pkgs:
+    # get general summary information
     summary = {}
     summary['numpkg'] = len(pkgs)
     summary['size'] = sum([x['size'] for x in pkgs])
     if summary['numpkg'] == 1:
-        summary['pkgstring'] = 'package'
+        summary['pkgstring'] = pkg_string
     else:
-        summary['pkgstring'] = 'packages'
+        summary['pkgstring'] = pkgs_string
     summary['inumpkg'] = 0
     summary['isize'] = 0
+    # process each package into lines
     lines = []
-    pkgs.sort(cmp_pkgs, reverse=True)
+    pkgs.sort(key=lambda x: (x['rate'], x['size']), reverse=True)
     for pkg in pkgs:
         if pkg['rate'] >= iThresh:
             summary['isize'] += pkg['size']
@@ -199,15 +229,15 @@ if pkgs:
             left_template = ipkgLeftColTemplate
             right_template = ipkgRightColTemplate
             pkg_template = ipkgTemplate
+            offset = ipkgOffset
         else:
             left_template = pkgLeftColTemplate
             right_template = pkgRightColTemplate
             pkg_template = pkgTemplate
-
-        line = format_line(left_template, right_template, pkg_template, pkg, width, Xlate=Xlate)
+            offset = pkgOffset
+        line = format_line(left_template, right_template, pkg_template, pkg, width, offset, Xlate)
         lines.append(line)
-
-
+    # process summary line
     if summary['inumpkg']:
         left_template = isummaryLeftColTemplate
         right_template = isummaryRightColTemplate
@@ -216,9 +246,8 @@ if pkgs:
         left_template = summaryLeftColTemplate
         right_template = summaryRightColTemplate
         summary_template = summaryTemplate
-
     summary_line = format_line(left_template, right_template, summary_template, summary, width, Xlate=Xlate)
-
+    # create and print output based on user options
     out_list = []
     if showPkgDetail:
         out_list += lines[:num_of_pkgs]
@@ -226,7 +255,6 @@ if pkgs:
         out_list.append(block)
     if showSummary:
         out_list.append(summary_line)
-
     print(*out_list, sep=separator)
 else:
     print(u2d)
